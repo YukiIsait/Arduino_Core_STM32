@@ -12,9 +12,6 @@
  */
 #pragma once
 
-// Value of the External oscillator in Hz
-#define HSE_VALUE               12000000U
-
 /*----------------------------------------------------------------------------
  *        STM32 pins number
  *----------------------------------------------------------------------------*/
@@ -122,10 +119,10 @@
 
 // I2C definitions
 #ifndef PIN_WIRE_SDA
-  #define PIN_WIRE_SDA          PB7
+  #define PIN_WIRE_SDA          PB11
 #endif
 #ifndef PIN_WIRE_SCL
-  #define PIN_WIRE_SCL          PB6
+  #define PIN_WIRE_SCL          PB10
 #endif
 
 // Timer Definitions
@@ -151,13 +148,8 @@
   #define PIN_SERIAL_TX         PA9
 #endif
 
-// On-board SHT20 I2C
-#define SHT20_I2C_SDA           PB11
-#define SHT20_I2C_SCL           PB10
-
-// On-board AT24C02 I2C
-#define AT24C02_I2C_SDA         PB11
-#define AT24C02_I2C_SCL         PB10
+// Value of the External oscillator in Hz
+#define HSE_VALUE               12000000U
 
 /*----------------------------------------------------------------------------
  *        Arduino objects - C++ only
