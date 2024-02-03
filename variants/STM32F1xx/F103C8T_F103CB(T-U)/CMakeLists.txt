@@ -28,6 +28,7 @@ add_library(variant_bin STATIC EXCLUDE_FROM_ALL
   variant_MALYANM200_F103CB.cpp
   variant_MAPLEMINI_F103CB.cpp
   variant_PILL_F103Cx.cpp
+  variant_UNICORN_MINI.cpp
 )
 target_link_libraries(variant_bin PUBLIC variant_usage)
 

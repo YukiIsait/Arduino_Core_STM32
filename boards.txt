@@ -2120,6 +2120,15 @@ GenF1.build.flash_offset=0x0
 GenF1.upload.maximum_size=0
 GenF1.upload.maximum_data_size=0
 
+# Unicorn Mini board
+GenF1.menu.pnum.UNICORN_MINI=Unicorn Mini
+GenF1.menu.pnum.UNICORN_MINI.upload.maximum_size=131072
+GenF1.menu.pnum.UNICORN_MINI.upload.maximum_data_size=20480
+GenF1.menu.pnum.UNICORN_MINI.build.board=UNICORN_MINI
+GenF1.menu.pnum.UNICORN_MINI.build.product_line=STM32F103xB
+GenF1.menu.pnum.UNICORN_MINI.build.variant=STM32F1xx/F103C8T_F103CB(T-U)
+GenF1.menu.pnum.UNICORN_MINI.build.variant_h=variant_{build.board}.h
+
 # BLUEPILL_F103C6 board
 GenF1.menu.pnum.BLUEPILL_F103C6=BluePill F103C6 (32K)
 GenF1.menu.pnum.BLUEPILL_F103C6.upload.maximum_size=32768
