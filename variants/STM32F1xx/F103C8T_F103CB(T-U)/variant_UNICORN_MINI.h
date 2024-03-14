@@ -12,6 +12,9 @@
  */
 #pragma once
 
+// Value of the External oscillator in Hz
+#define HSE_VALUE               12000000U
+
 /*----------------------------------------------------------------------------
  *        STM32 pins number
  *----------------------------------------------------------------------------*/
@@ -141,6 +144,7 @@
 
 // Default pin used for generic 'Serial' instance
 // Mandatory for Firmata
+#define ENABLE_HWSERIAL1
 #ifndef PIN_SERIAL_RX
   #define PIN_SERIAL_RX         PA10
 #endif
@@ -148,8 +152,13 @@
   #define PIN_SERIAL_TX         PA9
 #endif
 
-// Value of the External oscillator in Hz
-#define HSE_VALUE               12000000U
+#define ENABLE_HWSERIAL2
+#ifndef PIN_SERIAL1_RX
+  #define PIN_SERIAL1_RX        PA3
+#endif
+#ifndef PIN_SERIAL1_TX
+  #define PIN_SERIAL1_TX        PA2
+#endif
 
 /*----------------------------------------------------------------------------
  *        Arduino objects - C++ only
