@@ -24,10 +24,14 @@
   #include "stm32l5xx_hal_rng.c"
 #elif STM32MP1xx
   #include "stm32mp1xx_hal_rng.c"
+#elif STM32U0xx
+  #include "stm32u0xx_hal_rng.c"
 #elif STM32U5xx
   #include "stm32u5xx_hal_rng.c"
 #elif STM32WBxx
   #include "stm32wbxx_hal_rng.c"
+#elif STM32WBAxx
+  #include "stm32wbaxx_hal_rng.c"
 #elif STM32WLxx
   #include "stm32wlxx_hal_rng.c"
 #endif

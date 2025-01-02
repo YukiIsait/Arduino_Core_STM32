@@ -112,6 +112,8 @@
         And then application must send a associated dynamic address through HAL_I3C_Ctrl_SetDynAddr().
         This procedure in loop automatically in hardware side until a target respond to repeated ENTDAA sequence.
         The application is informed of the end of the procedure at reception of HAL_I3C_CtrlDAACpltCallback().
+        Then application can easily retrieve ENTDAA payload information through HAL_I3C_Get_ENTDAA_Payload_Info()
+        function.
         At the end of procedure, the function HAL_I3C_Ctrl_ConfigBusDevices() must be called to store in hardware
         register part the target capabilities as Dynamic address, IBI support with or without additional data byte,
         Controller role request support, Controller stop transfer after IBI through I3C_DeviceConfTypeDef structure.
@@ -125,12 +127,24 @@
         The I3C_XferTypeDef structure contains different parameters about Control, Status buffer,
         and Transmit and Receive buffer.
         Use HAL_I3C_AddDescToFrame() function each time application add a descriptor in the frame before call
-        an IO operation interface
+        a Controller IO operation interface
         One element of the frame descriptor correspond to one frame to manage through IO operation.
 
     (#) To check if I3C target device is ready for communication, use the function HAL_I3C_Ctrl_IsDeviceI3C_Ready()
 
     (#) To check if I2C target device is ready for communication, use the function HAL_I3C_Ctrl_IsDeviceI2C_Ready()
+
+    (#) To send a message header {S + 0x7E + W + STOP}, use the function HAL_I3C_Ctrl_GenerateArbitration().
+    (#) To insert a target reset pattern before the STOP of a transmitted frame containing a RSTACT CCC command,
+        the application must enable the reset pattern configuration using HAL_I3C_Ctrl_SetConfigResetPattern()
+        before calling HAL_I3C_Ctrl_TransmitCCC() or HAL_I3C_Ctrl_ReceiveCCC() interfaces.
+
+        To have a standard STOP emitted at the end of a frame containing a RSTACT CCC command, the application must
+        disable the reset pattern configuration using HAL_I3C_Ctrl_SetConfigResetPattern() before calling
+        HAL_I3C_Ctrl_TransmitCCC() or HAL_I3C_Ctrl_ReceiveCCC() interfaces.
+
+        Use HAL_I3C_Ctrl_SetConfigResetPattern() function to configure the insertion of the reset pattern at
+        the end of a Frame, and HAL_I3C_Ctrl_GetConfigResetPattern() to retrieve reset pattern configuration.
 
     (#) For I3C IO operations, three operation modes are available within this driver :
 
@@ -353,11 +367,129 @@
 #define I3C_BROADCAST_RSTDAA          (0x00000006U)
 #define I3C_BROADCAST_ENTDAA          (0x00000007U)
 
+/* Private define to split ENTDAA payload */
+#define I3C_DCR_IN_PAYLOAD_SHIFT       56
+#define I3C_PID_IN_PAYLOAD_MASK        0xFFFFFFFFFFFFU
+
+/* Private define to split PID */
+/* Bits[47:33]: MIPI Manufacturer ID */
+#define I3C_MIPIMID_PID_SHIFT          33
+#define I3C_MIPIMID_PID_MASK           0x7FFFU
+
+/* Bit[32]: Provisioned ID Type Selector */
+#define I3C_IDTSEL_PID_SHIFT           32
+#define I3C_IDTSEL_PID_MASK            0x01U
+
+/* Bits[31:16]: Part ID */
+#define I3C_PART_ID_PID_SHIFT          16
+#define I3C_PART_ID_PID_MASK           0xFFFFU
+
+/* Bits[15:12]: MIPI Instance ID */
+#define I3C_MIPIID_PID_SHIFT           12
+#define I3C_MIPIID_PID_MASK            0xFU
 /**
   * @}
   */
 
 /* Private macro -----------------------------------------------------------------------------------------------------*/
+
+/** @brief  Get Provisioned ID in payload (64bits) receive during ENTDAA procedure.
+  * @param  __PAYLOAD__ specifies the Device Characteristics capabilities retrieve during ENTDAA procedure.
+  *         This parameter must be a number between Min_Data=0x00(uint64_t) and Max_Data=0xFFFFFFFFFFFFFFFF.
+  * @retval The value of PID Return value between Min_Data=0x00 and Max_Data=0xFFFFFFFFFFFF.
+  */
+#define I3C_GET_PID(__PAYLOAD__) ((uint64_t)(__PAYLOAD__) & I3C_PID_IN_PAYLOAD_MASK)
+
+/** @brief  Get MIPI Manufacturer ID in PID (48bits).
+  * @param  __PID__ specifies the Provisioned ID retrieve during ENTDAA procedure.
+  *         This parameter must be a number between Min_Data=0x00(uint64_t) and Max_Data=0xFFFFFFFFFFFF.
+  * @retval The value of MIPI ID Return value between Min_Data=0x00 and Max_Data=0x7FFF.
+  */
+#define I3C_GET_MIPIMID(__PID__) ((uint16_t)((uint64_t)(__PID__) >> I3C_MIPIMID_PID_SHIFT) & \
+                                  I3C_MIPIMID_PID_MASK)
+
+/** @brief  Get Type Selector in PID (48bits).
+  * @param  __PID__ specifies the Provisioned ID retrieve during ENTDAA procedure.
+  *         This parameter must be a number between Min_Data=0x00(uint64_t) and Max_Data=0xFFFFFFFFFFFF.
+  * @retval The value of Type Selector Return 0 or 1.
+  */
+#define I3C_GET_IDTSEL(__PID__) ((uint8_t)((uint64_t)(__PID__) >> I3C_IDTSEL_PID_SHIFT) & \
+                                 I3C_IDTSEL_PID_MASK)
+
+/** @brief  Get Part ID in PID (48bits).
+  * @param  __PID__ specifies the Provisioned ID retrieve during ENTDAA procedure.
+  *         This parameter must be a number between Min_Data=0x00(uint64_t) and Max_Data=0xFFFFFFFFFFFF.
+  * @retval The value of Part ID Return value between Min_Data=0x00 and Max_Data=0xFFFF.
+  */
+#define I3C_GET_PART_ID(__PID__) ((uint16_t)((uint64_t)(__PID__) >> I3C_PART_ID_PID_SHIFT) & \
+                                  I3C_PART_ID_PID_MASK)
+
+/** @brief  Get Instance ID in PID (48bits).
+  * @param  __PID__ specifies the Provisioned ID retrieve during ENTDAA procedure.
+  *         This parameter must be a number between Min_Data=0x00(uint64_t) and Max_Data=0xFFFFFFFFFFFF.
+  * @retval The value of Instance ID Return value between Min_Data=0x00 and Max_Data=0xF.
+  */
+#define I3C_GET_MIPIID(__PID__) ((uint8_t)((uint64_t)(__PID__) >> I3C_MIPIID_PID_SHIFT) & \
+                                 I3C_MIPIID_PID_MASK)
+
+/** @brief  Get Device Characterics in payload (64bits) receive during ENTDAA procedure.
+  * @param  __PAYLOAD__ specifies the Device Characteristics capabilities retrieve during ENTDAA procedure.
+  *         This parameter must be a number between Min_Data=0x00(uint64_t) and Max_Data=0xFFFFFFFFFFFFFFFFFF.
+  * @retval The value of BCR Return value between Min_Data=0x00 and Max_Data=0xFF.
+  */
+#define I3C_GET_DCR(__PAYLOAD__) (((uint32_t)((uint64_t)(__PAYLOAD__) >> I3C_DCR_IN_PAYLOAD_SHIFT)) & \
+                                  I3C_DCR_DCR)
+
+/** @brief  Get Advanced Capabilities.
+  * @param  __BCR__ specifies the Bus Characteristics capabilities retrieve during ENTDAA procedure.
+  *         This parameter must be a number between Min_Data=0x00 and Max_Data=0xFF.
+  * @retval The value of advanced capabilities:
+  *           ENABLE: supports optional advanced capabilities.
+  *           DISABLE: not supports optional advanced capabilities.
+  */
+#define I3C_GET_ADVANCED_CAPABLE(__BCR__) (((((__BCR__) & I3C_BCR_BCR5_Msk) >> \
+                                             I3C_BCR_BCR5_Pos) == 1U) ? ENABLE : DISABLE)
+
+/** @brief  Get virtual target support.
+  * @param  __BCR__ specifies the Bus Characteristics capabilities retrieve during ENTDAA procedure.
+  *         This parameter must be a number between Min_Data=0x00 and Max_Data=0xFF.
+  * @retval The value of offline capable:
+  *           ENABLE: is a Virtual Target
+  *           DISABLE: is not a Virtual Target
+  */
+#define I3C_GET_VIRTUAL_TGT(__BCR__) (((((__BCR__) & I3C_BCR_BCR4_Msk) >> \
+                                        I3C_BCR_BCR4_Pos) == 1U) ? ENABLE : DISABLE)
+
+/** @brief  Get offline capable.
+  * @param  __BCR__ specifies the Bus Characteristics capabilities retrieve during ENTDAA procedure.
+  *         This parameter must be a number between Min_Data=0x00 and Max_Data=0xFF.
+  * @retval The value of offline capable
+  *           ENABLE: Device will not always respond to I3C Bus commands
+  *           DISABLE: Device will always respond to I3C Bus commands
+  */
+#define I3C_GET_OFFLINE_CAPABLE(__BCR__) (((((__BCR__) & I3C_BCR_BCR3_Msk) >> \
+                                            I3C_BCR_BCR3_Pos) == 1U) ? ENABLE : DISABLE)
+
+/** @brief  Get Max data speed limitation.
+  * @param  __BCR__ specifies the Bus Characteristics capabilities retrieve during ENTDAA procedure.
+  *         This parameter must be a number between Min_Data=0x00 and Max_Data=0xFF.
+  * @retval The value of offline capable:
+  *           ENABLE: Limitation
+  *           DISABLE: No Limitation
+  */
+#define I3C_GET_MAX_DATA_SPEED_LIMIT(__BCR__) (((((__BCR__) & I3C_BCR_BCR0_Msk) >> \
+                                                 I3C_BCR_BCR0_Pos) == 1U) ? ENABLE : DISABLE)
+
+/** @brief  Change uint32_t variable form big endian to little endian.
+  * @param  __DATA__ .uint32_t variable in big endian.
+  *         This parameter must be a number between Min_Data=0x00(uint32_t) and Max_Data=0xFFFFFFFF.
+  * @retval uint32_t variable in little endian.
+  */
+#define I3C_BIG_TO_LITTLE_ENDIAN(__DATA__) ((uint32_t)((((__DATA__) & 0xff000000U) >> 24) | \
+                                                       (((__DATA__) & 0x00ff0000U) >> 8)  | \
+                                                       (((__DATA__) & 0x0000ff00U) << 8)  | \
+                                                       (((__DATA__) & 0x000000ffU) << 24)))
+
 /* Private variables -------------------------------------------------------------------------------------------------*/
 /** @addtogroup  I3C_Private_Variables
   * @{
@@ -377,31 +509,31 @@ typedef struct
 /** @addtogroup I3C_Private_Functions
   * @{
   */
-static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Ctrl_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Tgt_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Tgt_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
+static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Ctrl_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Tgt_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Tgt_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
 #if defined(HAL_DMA_MODULE_ENABLED)
-static HAL_StatusTypeDef I3C_Tgt_Tx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Tgt_Rx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
+static HAL_StatusTypeDef I3C_Tgt_Tx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Tgt_Rx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
 #endif /* HAL_DMA_MODULE_ENABLED */
-static HAL_StatusTypeDef I3C_Tgt_HotJoin_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Tgt_CtrlRole_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Tgt_IBI_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Ctrl_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Ctrl_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_ISR(struct __I3C_HandleTypeDef *hi3c,
-                                                    uint32_t itFlags,
-                                                    uint32_t itSources);
+static HAL_StatusTypeDef I3C_Tgt_HotJoin_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Tgt_CtrlRole_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Tgt_IBI_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Ctrl_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Ctrl_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Ctrl_Tx_Listen_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Ctrl_Rx_Listen_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_Listen_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
 #if defined(HAL_DMA_MODULE_ENABLED)
-static HAL_StatusTypeDef I3C_Ctrl_Tx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Ctrl_Rx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_DMA_ISR(struct __I3C_HandleTypeDef *hi3c,
-                                                        uint32_t itFlags,
-                                                        uint32_t itSources);
+static HAL_StatusTypeDef I3C_Ctrl_Tx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Ctrl_Rx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
 #endif /* HAL_DMA_MODULE_ENABLED */
-static HAL_StatusTypeDef I3C_Ctrl_DAA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
-static HAL_StatusTypeDef I3C_Abort_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources);
+static HAL_StatusTypeDef I3C_Ctrl_DAA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+static HAL_StatusTypeDef I3C_Abort_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks);
+
 static HAL_StatusTypeDef I3C_WaitOnDAAUntilTimeout(I3C_HandleTypeDef *hi3c, uint32_t timeout, uint32_t tickstart);
 static HAL_StatusTypeDef I3C_WaitOnFlagUntilTimeout(I3C_HandleTypeDef *hi3c, uint32_t flag, FlagStatus flagstatus,
                                                     uint32_t timeout, uint32_t tickstart);
@@ -1486,10 +1618,12 @@ void HAL_I3C_EV_IRQHandler(I3C_HandleTypeDef *hi3c) /* Derogation MISRAC2012-Rul
   uint32_t it_flags   = READ_REG(hi3c->Instance->EVR);
   uint32_t it_sources = READ_REG(hi3c->Instance->IER);
 
+  uint32_t it_masks   = (uint32_t)(it_flags & it_sources);
+
   /* I3C events treatment */
   if (hi3c->XferISR != NULL)
   {
-    hi3c->XferISR(hi3c, it_flags, it_sources);
+    hi3c->XferISR(hi3c, it_masks);
   }
 }
 /**
@@ -1527,9 +1661,13 @@ void HAL_I3C_EV_IRQHandler(I3C_HandleTypeDef *hi3c) /* Derogation MISRAC2012-Rul
              All different characteristics must be fill through structure I3C_DeviceConfTypeDef.
              This function is called only when mode is Controller.
 
-         (+) Call the function HAL_I3C_AddDescToFrame() to prepare the full transfer usecase in a transfer descriptor
-             which contained different buffer pointers and their associated size through I3C_XferTypeDef.
+         (+) Call the function HAL_I3C_AddDescToFrame() to prepare the full transfer usecase in a Controller transfer
+             descriptor which contained different buffer pointers and their associated size through I3C_XferTypeDef.
              This function must be called before initiate any communication transfer.
+         (+) Call the function HAL_I3C_Ctrl_SetConfigResetPattern() to configure the insertion of the reset pattern
+             at the end of a Frame.
+         (+) Call the function HAL_I3C_Ctrl_GetConfigResetPattern() to get the current reset pattern configuration
+
      [..]
        (@) Users must call all above functions after I3C initialization.
 
@@ -2003,10 +2141,10 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_ConfigBusDevices(I3C_HandleTypeDef           *hi3
 }
 
 /**
-  * @brief  Add Private or CCC descriptor in the user data transfer descriptor.
-  * @note   This function must be called before initiate any communication transfer. This function help the preparation
-  *         of the full transfer usecase in a transfer descriptor which contained different buffer pointers
-  *         and their associated size through I3C_XferTypeDef.
+  * @brief  Add Private or CCC descriptor in the user data transfer controller descriptor.
+  * @note   This function must be called before initiate initiate any controller communication transfer. This function
+  *         help the preparation of the full transfer usecase in a transfer descriptor which contained different buffer
+  *         pointers and their associated size through I3C_XferTypeDef.
   * @note   The Tx FIFO threshold @ref HAL_I3C_TXFIFO_THRESHOLD_4_4 is not allowed when the transfer descriptor contains
   *         multiple transmission frames.
   * @param  hi3c          : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
@@ -2094,6 +2232,110 @@ HAL_StatusTypeDef HAL_I3C_AddDescToFrame(I3C_HandleTypeDef         *hi3c,
       {
         status = HAL_BUSY;
       }
+    }
+  }
+
+  return status;
+}
+
+/**
+  * @brief Set the configuration of the inserted reset pattern at the end of a Frame.
+  * @note  When the transfer descriptor contains multiple frames with RESTART option, the reset pattern at the end of
+  *        RSTACT CCC frame is not possible.
+  * @param  hi3c         : [IN] Pointer to an I3C_HandleTypeDef structure that contains
+  *                             the configuration information for the specified I3C.
+  * @param  resetPattern : [IN] Specifies the reset pattern configuration.
+  *                             It can be a value of @ref I3C_RESET_PATTERN
+  * @retval HAL Status   :      Value from HAL_StatusTypeDef enumeration.
+  */
+HAL_StatusTypeDef HAL_I3C_Ctrl_SetConfigResetPattern(I3C_HandleTypeDef *hi3c, uint32_t resetPattern)
+{
+  HAL_StatusTypeDef status = HAL_OK;
+  HAL_I3C_StateTypeDef handle_state;
+
+  /* check on the handle */
+  if (hi3c == NULL)
+  {
+    status = HAL_ERROR;
+  }
+  else
+  {
+    /* Check the instance and the mode parameters */
+    assert_param(IS_I3C_ALL_INSTANCE(hi3c->Instance));
+    assert_param(IS_I3C_MODE(hi3c->Mode));
+    assert_param(IS_I3C_RESET_PATTERN(resetPattern));
+
+    /* Get I3C handle state */
+    handle_state = hi3c->State;
+
+    /* check on the Mode */
+    if (hi3c->Mode != HAL_I3C_MODE_CONTROLLER)
+    {
+      hi3c->ErrorCode = HAL_I3C_ERROR_NOT_ALLOWED;
+      status = HAL_ERROR;
+    }
+    /* check on the State */
+    else if ((handle_state != HAL_I3C_STATE_READY) && (handle_state != HAL_I3C_STATE_LISTEN))
+    {
+      status = HAL_BUSY;
+    }
+    else
+    {
+      hi3c->State = HAL_I3C_STATE_BUSY;
+
+      if (resetPattern == HAL_I3C_RESET_PATTERN_ENABLE)
+      {
+        LL_I3C_EnableResetPattern(hi3c->Instance);
+      }
+      else
+      {
+        LL_I3C_DisableResetPattern(hi3c->Instance);
+      }
+
+      /* At the end of process update state to Previous state */
+      I3C_StateUpdate(hi3c);
+    }
+  }
+
+  return status;
+}
+
+/**
+  * @brief Get the configuration of the inserted reset pattern at the end of a Frame.
+  * @param  hi3c          : [IN] Pointer to an I3C_HandleTypeDef structure that contains
+  *                              the configuration information for the specified I3C.
+  * @param  pResetPattern : [OUT] Pointer to the current reset pattern configuration.
+  *                               It can be a value of @ref I3C_RESET_PATTERN
+  * @retval HAL Status    :       Value from HAL_StatusTypeDef enumeration.
+  */
+HAL_StatusTypeDef HAL_I3C_Ctrl_GetConfigResetPattern(I3C_HandleTypeDef *hi3c, uint32_t *pResetPattern)
+{
+  HAL_StatusTypeDef status = HAL_OK;
+
+  /* check on the handle */
+  if (hi3c == NULL)
+  {
+    status = HAL_ERROR;
+  }
+  /* Check on user parameters */
+  else if (pResetPattern == NULL)
+  {
+    status = HAL_ERROR;
+  }
+  else
+  {
+    /* Check the instance and the mode parameters */
+    assert_param(IS_I3C_ALL_INSTANCE(hi3c->Instance));
+    assert_param(IS_I3C_MODE(hi3c->Mode));
+
+    /* Check if the reset pattern configuration is enabled */
+    if (LL_I3C_IsEnabledResetPattern(hi3c->Instance) == 1U)
+    {
+      *pResetPattern     = HAL_I3C_RESET_PATTERN_ENABLE;
+    }
+    else
+    {
+      *pResetPattern     = HAL_I3C_RESET_PATTERN_DISABLE;
     }
   }
 
@@ -2474,6 +2716,8 @@ HAL_StatusTypeDef HAL_I3C_GetConfigFifo(I3C_HandleTypeDef *hi3c, I3C_FifoConfTyp
              during the Dynamic Address Assignment processus.
          (+) Call the function HAL_I3C_Ctrl_IsDeviceI3C_Ready() to check if I3C target device is ready.
          (+) Call the function HAL_I3C_Ctrl_IsDeviceI2C_Ready() to check if I2C target device is ready.
+         (+) Call the function HAL_I3C_Ctrl_GenerateArbitration to send arbitration
+            (message header {S + 0x7E + W + STOP}) in polling mode
 
          (+) Those functions are called only when mode is Controller.
 
@@ -2519,7 +2763,7 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_TransmitCCC(I3C_HandleTypeDef *hi3c,
 
     /* Check on user parameters */
     if ((pXferData == NULL) ||
-        ((pXferData->TxBuf.pBuffer == NULL) && (hi3c->TxXferCount != 0U)))
+        ((hi3c->TxXferCount != 0U) && (pXferData->TxBuf.pBuffer == NULL)))
     {
       hi3c->ErrorCode = HAL_I3C_ERROR_INVALID_PARAM;
       status = HAL_ERROR;
@@ -2679,7 +2923,7 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_TransmitCCC_IT(I3C_HandleTypeDef *hi3c,
 
     /* Check on user parameters */
     if ((pXferData == NULL) ||
-        ((pXferData->TxBuf.pBuffer == NULL) && (hi3c->TxXferCount != 0U)))
+        ((hi3c->TxXferCount != 0U) && (pXferData->TxBuf.pBuffer == NULL)))
     {
       hi3c->ErrorCode = HAL_I3C_ERROR_INVALID_PARAM;
       status = HAL_ERROR;
@@ -2699,9 +2943,19 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_TransmitCCC_IT(I3C_HandleTypeDef *hi3c,
     {
       /* Set handle transfer parameters */
       hi3c->ErrorCode = HAL_I3C_ERROR_NONE;
-      hi3c->State     = HAL_I3C_STATE_BUSY_TX;
+
+      if (handle_state == HAL_I3C_STATE_LISTEN)
+      {
+        hi3c->XferISR = I3C_Ctrl_Tx_Listen_Event_ISR;
+      }
+      else
+      {
+        hi3c->XferISR = I3C_Ctrl_Tx_ISR;
+      }
+
       hi3c->pXferData = pXferData;
-      hi3c->XferISR   = I3C_Ctrl_Tx_ISR;
+      hi3c->State     = HAL_I3C_STATE_BUSY_TX;
+
 
       /* Check on the Tx threshold to know the Tx treatment process : byte or word */
       if (LL_I3C_GetTxFIFOThreshold(hi3c->Instance) == LL_I3C_TXFIFO_THRESHOLD_1_4)
@@ -2767,7 +3021,7 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_TransmitCCC_DMA(I3C_HandleTypeDef *hi3c,
 
     /* Check on user parameters */
     if ((pXferData == NULL) ||
-        ((pXferData->TxBuf.pBuffer == NULL) && (hi3c->TxXferCount != 0U)))
+        ((hi3c->TxXferCount != 0U) && (pXferData->TxBuf.pBuffer == NULL)))
     {
       hi3c->ErrorCode = HAL_I3C_ERROR_INVALID_PARAM;
       status = HAL_ERROR;
@@ -2792,10 +3046,10 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_TransmitCCC_DMA(I3C_HandleTypeDef *hi3c,
     else
     {
       /* Set handle transfer parameters */
-      hi3c->ErrorCode = HAL_I3C_ERROR_NONE;
-      hi3c->State     = HAL_I3C_STATE_BUSY_TX;
-      hi3c->pXferData = pXferData;
-      hi3c->XferISR   = I3C_Ctrl_Tx_DMA_ISR;
+      hi3c->ErrorCode     = HAL_I3C_ERROR_NONE;
+      hi3c->XferISR       = I3C_Ctrl_Tx_DMA_ISR;
+      hi3c->pXferData     = pXferData;
+      hi3c->State         = HAL_I3C_STATE_BUSY_TX;
 
       /*------------------------------------ I3C DMA channel for Control Data ----------------------------------------*/
       /* Set the I3C DMA transfer complete callback */
@@ -2950,7 +3204,6 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_ReceiveCCC(I3C_HandleTypeDef *hi3c,
   }
   else
   {
-
     /* Check the instance and the mode parameters */
     assert_param(IS_I3C_ALL_INSTANCE(hi3c->Instance));
     assert_param(IS_I3C_MODE(hi3c->Mode));
@@ -3133,7 +3386,6 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_ReceiveCCC_IT(I3C_HandleTypeDef *hi3c,
   }
   else
   {
-
     /* Check the instance and the mode parameters */
     assert_param(IS_I3C_ALL_INSTANCE(hi3c->Instance));
     assert_param(IS_I3C_MODE(hi3c->Mode));
@@ -3164,10 +3416,17 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_ReceiveCCC_IT(I3C_HandleTypeDef *hi3c,
     {
       /* Set handle transfer parameters */
       hi3c->ErrorCode   = HAL_I3C_ERROR_NONE;
-      hi3c->State       = HAL_I3C_STATE_BUSY_RX;
+      if (handle_state == HAL_I3C_STATE_LISTEN)
+      {
+        hi3c->XferISR   = I3C_Ctrl_Rx_Listen_Event_ISR;
+      }
+      else
+      {
+        hi3c->XferISR   = I3C_Ctrl_Rx_ISR;
+      }
       hi3c->pXferData   = pXferData;
       hi3c->RxXferCount = pXferData->RxBuf.Size;
-      hi3c->XferISR     = I3C_Ctrl_Rx_ISR;
+      hi3c->State       = HAL_I3C_STATE_BUSY_RX;
 
       /* Check on CCC defining byte */
       if (hi3c->TxXferCount != 0U)
@@ -3281,10 +3540,10 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_ReceiveCCC_DMA(I3C_HandleTypeDef *hi3c,
     {
       /* Set handle transfer parameters */
       hi3c->ErrorCode   = HAL_I3C_ERROR_NONE;
-      hi3c->State       = HAL_I3C_STATE_BUSY_RX;
+      hi3c->XferISR     = I3C_Ctrl_Rx_DMA_ISR;
       hi3c->pXferData   = pXferData;
       hi3c->RxXferCount = hi3c->pXferData->RxBuf.Size;
-      hi3c->XferISR     = I3C_Ctrl_Rx_DMA_ISR;
+      hi3c->State       = HAL_I3C_STATE_BUSY_RX;
 
       /*------------------------------------ I3C DMA channel for Control Data ----------------------------------------*/
       /* Set the I3C DMA transfer complete callback */
@@ -3506,7 +3765,7 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_Transmit(I3C_HandleTypeDef   *hi3c,
 
     /* Check on user parameters */
     if ((pXferData == NULL) ||
-        ((pXferData->TxBuf.pBuffer == NULL) && (hi3c->TxXferCount != 0U)))
+        ((hi3c->TxXferCount != 0U) && (pXferData->TxBuf.pBuffer == NULL)))
     {
       hi3c->ErrorCode = HAL_I3C_ERROR_INVALID_PARAM;
       status = HAL_ERROR;
@@ -3528,7 +3787,6 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_Transmit(I3C_HandleTypeDef   *hi3c,
       hi3c->ErrorCode     = HAL_I3C_ERROR_NONE;
       hi3c->State         = HAL_I3C_STATE_BUSY_TX;
       hi3c->pXferData     = pXferData;
-      hi3c->TxXferCount   = hi3c->pXferData->TxBuf.Size;
 
       /* Check on the Tx threshold to know the Tx treatment process : byte or word */
       if (LL_I3C_GetTxFIFOThreshold(hi3c->Instance) == LL_I3C_TXFIFO_THRESHOLD_1_4)
@@ -3667,7 +3925,7 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_Transmit_IT(I3C_HandleTypeDef   *hi3c,
 
     /* Check on user parameters */
     if ((pXferData == NULL) ||
-        ((pXferData->TxBuf.pBuffer == NULL) && (hi3c->TxXferCount != 0U)))
+        ((hi3c->TxXferCount != 0U) && (pXferData->TxBuf.pBuffer == NULL)))
     {
       hi3c->ErrorCode = HAL_I3C_ERROR_INVALID_PARAM;
       status = HAL_ERROR;
@@ -3687,10 +3945,16 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_Transmit_IT(I3C_HandleTypeDef   *hi3c,
     {
       /* Set handle transfer parameters */
       hi3c->ErrorCode     = HAL_I3C_ERROR_NONE;
-      hi3c->State         = HAL_I3C_STATE_BUSY_TX;
+      if (handle_state == HAL_I3C_STATE_LISTEN)
+      {
+        hi3c->XferISR     = I3C_Ctrl_Tx_Listen_Event_ISR;
+      }
+      else
+      {
+        hi3c->XferISR     = I3C_Ctrl_Tx_ISR;
+      }
       hi3c->pXferData     = pXferData;
-      hi3c->TxXferCount   = hi3c->pXferData->TxBuf.Size;
-      hi3c->XferISR       = I3C_Ctrl_Tx_ISR;
+      hi3c->State         = HAL_I3C_STATE_BUSY_TX;
 
       /* Check on the Tx threshold to know the Tx treatment process : byte or word */
       if (LL_I3C_GetTxFIFOThreshold(hi3c->Instance) == LL_I3C_TXFIFO_THRESHOLD_1_4)
@@ -3757,7 +4021,7 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_Transmit_DMA(I3C_HandleTypeDef   *hi3c,
 
     /* Check on user parameters */
     if ((pXferData == NULL) ||
-        ((pXferData->TxBuf.pBuffer == NULL) && (hi3c->TxXferCount != 0U)))
+        ((hi3c->TxXferCount != 0U) && (pXferData->TxBuf.pBuffer == NULL)))
     {
       hi3c->ErrorCode = HAL_I3C_ERROR_INVALID_PARAM;
       status = HAL_ERROR;
@@ -3783,10 +4047,9 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_Transmit_DMA(I3C_HandleTypeDef   *hi3c,
     {
       /* Set handle transfer parameters */
       hi3c->ErrorCode     = HAL_I3C_ERROR_NONE;
+      hi3c->XferISR       = I3C_Ctrl_Tx_DMA_ISR;
       hi3c->State         = HAL_I3C_STATE_BUSY_TX;
       hi3c->pXferData     = pXferData;
-      hi3c->TxXferCount   = hi3c->pXferData->TxBuf.Size;
-      hi3c->XferISR       = I3C_Ctrl_Tx_DMA_ISR;
 
       /*------------------------------------ I3C DMA channel for Control Data ----------------------------------------*/
       /* Set the I3C DMA transfer complete callback */
@@ -4127,10 +4390,17 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_Receive_IT(I3C_HandleTypeDef   *hi3c,
     {
       /* Set handle transfer parameters */
       hi3c->ErrorCode     = HAL_I3C_ERROR_NONE;
-      hi3c->State         = HAL_I3C_STATE_BUSY_RX;
+      if (handle_state == HAL_I3C_STATE_LISTEN)
+      {
+        hi3c->XferISR     = I3C_Ctrl_Rx_Listen_Event_ISR;
+      }
+      else
+      {
+        hi3c->XferISR     = I3C_Ctrl_Rx_ISR;
+      }
       hi3c->pXferData     = pXferData;
       hi3c->RxXferCount   = hi3c->pXferData->RxBuf.Size;
-      hi3c->XferISR       = I3C_Ctrl_Rx_ISR;
+      hi3c->State         = HAL_I3C_STATE_BUSY_RX;
 
       /* Check on the Rx threshold to know the Rx treatment process : byte or word */
       if (LL_I3C_GetRxFIFOThreshold(hi3c->Instance) == LL_I3C_RXFIFO_THRESHOLD_1_4)
@@ -4220,10 +4490,10 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_Receive_DMA(I3C_HandleTypeDef   *hi3c,
     {
       /* Set handle transfer parameters */
       hi3c->ErrorCode     = HAL_I3C_ERROR_NONE;
-      hi3c->State         = HAL_I3C_STATE_BUSY_RX;
+      hi3c->XferISR       = I3C_Ctrl_Rx_DMA_ISR;
       hi3c->pXferData     = pXferData;
       hi3c->RxXferCount   = hi3c->pXferData->RxBuf.Size;
-      hi3c->XferISR       = I3C_Ctrl_Rx_DMA_ISR;
+      hi3c->State         = HAL_I3C_STATE_BUSY_RX;
 
       /*------------------------------------ I3C DMA channel for Control Data ----------------------------------------*/
       /* Set the I3C DMA transfer complete callback */
@@ -4409,11 +4679,18 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_MultipleTransfer_IT(I3C_HandleTypeDef   *hi3c,
     {
       /* Set handle transfer parameters */
       hi3c->ErrorCode     = HAL_I3C_ERROR_NONE;
-      hi3c->State         = HAL_I3C_STATE_BUSY_TX_RX;
+      if (handle_state == HAL_I3C_STATE_LISTEN)
+      {
+        hi3c->XferISR     = I3C_Ctrl_Multiple_Xfer_Listen_Event_ISR;
+      }
+      else
+      {
+        hi3c->XferISR     = I3C_Ctrl_Multiple_Xfer_ISR;
+      }
       hi3c->pXferData     = pXferData;
       hi3c->TxXferCount   = hi3c->pXferData->TxBuf.Size;
       hi3c->RxXferCount   = hi3c->pXferData->RxBuf.Size;
-      hi3c->XferISR       = I3C_Ctrl_Multiple_Xfer_ISR;
+      hi3c->State         = HAL_I3C_STATE_BUSY_TX_RX;
 
       /* Check on the Tx threshold to know the Tx treatment process : byte or word */
       if (LL_I3C_GetTxFIFOThreshold(hi3c->Instance) == LL_I3C_TXFIFO_THRESHOLD_1_4)
@@ -4520,11 +4797,11 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_MultipleTransfer_DMA(I3C_HandleTypeDef   *hi3c, I
     {
       /* Set handle transfer parameters */
       hi3c->ErrorCode     = HAL_I3C_ERROR_NONE;
-      hi3c->State         = HAL_I3C_STATE_BUSY_TX_RX;
+      hi3c->XferISR       = I3C_Ctrl_Multiple_Xfer_DMA_ISR;
       hi3c->pXferData     = pXferData;
       hi3c->RxXferCount   = hi3c->pXferData->RxBuf.Size;
       hi3c->TxXferCount   = hi3c->pXferData->TxBuf.Size;
-      hi3c->XferISR       = I3C_Ctrl_Multiple_Xfer_DMA_ISR;
+      hi3c->State         = HAL_I3C_STATE_BUSY_TX_RX;
 
       /*------------------------------------ I3C DMA channel for Control Data -------------------------------------*/
       /* Set the I3C DMA transfer complete callback */
@@ -5075,6 +5352,109 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_IsDeviceI2C_Ready(I3C_HandleTypeDef *hi3c,
 
   return status;
 }
+
+/**
+  * @brief Controller generates arbitration (message header {S/Sr + 0x7E addr + W}) in polling mode.
+  * @param  hi3c       : [IN] Pointer to an I3C_HandleTypeDef structure that contains
+  *                           the configuration information for the specified I3C.
+  * @param  timeout    : [IN] Timeout duration
+  * @retval HAL Status :      Value from HAL_StatusTypeDef enumeration.
+  */
+HAL_StatusTypeDef HAL_I3C_Ctrl_GenerateArbitration(I3C_HandleTypeDef *hi3c, uint32_t timeout)
+{
+  HAL_StatusTypeDef status = HAL_OK;
+  HAL_I3C_StateTypeDef handle_state;
+  __IO uint32_t exit_condition;
+  uint32_t tickstart;
+
+  /* check on the handle */
+  if (hi3c == NULL)
+  {
+    status = HAL_ERROR;
+  }
+  else
+  {
+    /* Check the instance and the mode parameters */
+    assert_param(IS_I3C_ALL_INSTANCE(hi3c->Instance));
+    assert_param(IS_I3C_MODE(hi3c->Mode));
+
+    /* Get I3C handle state */
+    handle_state = hi3c->State;
+
+    /* check on the Mode */
+    if (hi3c->Mode != HAL_I3C_MODE_CONTROLLER)
+    {
+      hi3c->ErrorCode = HAL_I3C_ERROR_NOT_ALLOWED;
+      status = HAL_ERROR;
+    }
+    /* check on the State */
+    else if ((handle_state != HAL_I3C_STATE_READY) && (handle_state != HAL_I3C_STATE_LISTEN))
+    {
+      status = HAL_BUSY;
+    }
+    else
+    {
+      hi3c->State = HAL_I3C_STATE_BUSY;
+
+      /* Disable exit pattern */
+      LL_I3C_DisableExitPattern(hi3c->Instance);
+      /* Disable reset pattern */
+      LL_I3C_DisableResetPattern(hi3c->Instance);
+
+      /* Write message control register */
+      WRITE_REG(hi3c->Instance->CR, LL_I3C_CONTROLLER_MTYPE_HEADER | LL_I3C_GENERATE_STOP);
+
+      /* Calculate exit_condition value based on Frame complete and error flags */
+      exit_condition = (READ_REG(hi3c->Instance->EVR) & (I3C_EVR_FCF | I3C_EVR_ERRF));
+
+      tickstart = HAL_GetTick();
+
+      while (exit_condition == 0U)
+      {
+        if (timeout != HAL_MAX_DELAY)
+        {
+          if (((HAL_GetTick() - tickstart) > timeout) || (timeout == 0U))
+          {
+            /* Update I3C error code */
+            hi3c->ErrorCode |= HAL_I3C_ERROR_TIMEOUT;
+            status = HAL_TIMEOUT;
+
+            break;
+          }
+        }
+        /* Calculate exit_condition value based on Frame complete and error flags */
+        exit_condition = (READ_REG(hi3c->Instance->EVR) & (I3C_EVR_FCF | I3C_EVR_ERRF));
+      }
+
+      if (status == HAL_OK)
+      {
+        /* Check if the FCF flag has been set */
+        if (__HAL_I3C_GET_FLAG(hi3c, I3C_EVR_FCF) == SET)
+        {
+          /* Clear frame complete flag */
+          LL_I3C_ClearFlag_FC(hi3c->Instance);
+        }
+        else
+        {
+          /* Clear error flag */
+          LL_I3C_ClearFlag_ERR(hi3c->Instance);
+
+          /* Update handle error code parameter */
+          I3C_GetErrorSources(hi3c);
+
+          /* Update returned status value */
+          status = HAL_ERROR;
+        }
+      }
+
+      /* At the end of Rx process update state to Previous state */
+      I3C_StateUpdate(hi3c);
+    }
+  }
+
+  return status;
+}
+
 /**
   * @}
   */
@@ -5115,7 +5495,6 @@ HAL_StatusTypeDef HAL_I3C_Ctrl_IsDeviceI2C_Ready(I3C_HandleTypeDef *hi3c,
   * @param  pXferData  : [IN]  Pointer to an I3C_XferTypeDef structure that contains required transmission buffers
   *                            information (Pointer to the Tx buffer (TxBuf.pBuffer) and size of data
   *                            to transmit in bytes (TxBuf.Size)).
-  *                            This value contain transfer data after called @ref HAL_I3C_AddDescToFrame().
   * @param  timeout    : [IN]  Timeout duration in millisecond.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
@@ -5259,7 +5638,6 @@ HAL_StatusTypeDef HAL_I3C_Tgt_Transmit(I3C_HandleTypeDef *hi3c, I3C_XferTypeDef 
   * @param  pXferData  : [IN]  Pointer to an I3C_XferTypeDef structure that contains required transmission buffers
   *                            information (Pointer to the Tx buffer (TxBuf.pBuffer) and size of data
   *                            to transmit in bytes (TxBuf.Size)).
-  *                            This value contain transfer data after called @ref HAL_I3C_AddDescToFrame().
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
 HAL_StatusTypeDef HAL_I3C_Tgt_Transmit_IT(I3C_HandleTypeDef *hi3c, I3C_XferTypeDef *pXferData)
@@ -5358,7 +5736,6 @@ HAL_StatusTypeDef HAL_I3C_Tgt_Transmit_IT(I3C_HandleTypeDef *hi3c, I3C_XferTypeD
   * @param  pXferData  : [IN]  Pointer to an I3C_XferTypeDef structure that contains required transmission buffers
   *                            information (Pointer to the Tx buffer (TxBuf.pBuffer) and size of data
   *                            to transmit in bytes (TxBuf.Size)).
-  *                            This value contain transfer data after called @ref HAL_I3C_AddDescToFrame().
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
 HAL_StatusTypeDef HAL_I3C_Tgt_Transmit_DMA(I3C_HandleTypeDef *hi3c, I3C_XferTypeDef *pXferData)
@@ -5519,7 +5896,6 @@ HAL_StatusTypeDef HAL_I3C_Tgt_Transmit_DMA(I3C_HandleTypeDef *hi3c, I3C_XferType
   * @param  pXferData  : [IN]  Pointer to an I3C_XferTypeDef structure that contains required reception buffers
   *                            information (Pointer to the Rx buffer (RxBuf.pBuffer) and size of data
   *                            to be received in bytes (RxBuf.Size)).
-  *                            This value contain transfer data after called @ref HAL_I3C_AddDescToFrame().
   * @param  timeout    : [IN]  Timeout duration in millisecond.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
@@ -5662,7 +6038,6 @@ HAL_StatusTypeDef HAL_I3C_Tgt_Receive(I3C_HandleTypeDef *hi3c, I3C_XferTypeDef *
   * @param  pXferData  : [IN]  Pointer to an I3C_XferTypeDef structure that contains required reception buffers
   *                            information (Pointer to the Rx buffer (RxBuf.pBuffer) and size of data
   *                            to be received in bytes (RxBuf.Size)).
-  *                            This value contain transfer data after called @ref HAL_I3C_AddDescToFrame().
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
 HAL_StatusTypeDef HAL_I3C_Tgt_Receive_IT(I3C_HandleTypeDef *hi3c, I3C_XferTypeDef *pXferData)
@@ -5757,7 +6132,6 @@ HAL_StatusTypeDef HAL_I3C_Tgt_Receive_IT(I3C_HandleTypeDef *hi3c, I3C_XferTypeDe
   * @param  pXferData  : [IN]  Pointer to an I3C_XferTypeDef structure that contains required reception buffers
   *                            information (Pointer to the Rx buffer (RxBuf.pBuffer) and size of data
   *                            to be received in bytes (RxBuf.Size)).
-  *                            This value contain transfer data after called @ref HAL_I3C_AddDescToFrame().
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
 HAL_StatusTypeDef HAL_I3C_Tgt_Receive_DMA(I3C_HandleTypeDef *hi3c, I3C_XferTypeDef *pXferData)
@@ -6502,6 +6876,7 @@ HAL_StatusTypeDef HAL_I3C_Tgt_IBIReq_IT(I3C_HandleTypeDef *hi3c, const uint8_t *
          (+) Call the function HAL_I3C_GetState() to get the I3C handle state.
          (+) Call the function HAL_I3C_GetMode() to get the I3C handle mode.
          (+) Call the function HAL_I3C_GetError() to get the error code.
+         (+) Call the function HAL_I3C_Get_ENTDAA_Payload_Info() to get BCR, DCR and PID information after ENTDAA.
 
 @endverbatim
   * @{
@@ -6622,7 +6997,7 @@ uint32_t HAL_I3C_GetError(const I3C_HandleTypeDef *hi3c)
   *                         It can be a combination of value of @ref HAL_I3C_Notification_ID_definition.
   * @param  pCCCInfo : [IN/OUT] Pointer to an I3C_CCCInfoTypeDef structure that contains the CCC information
   *                             updated after CCC event.
-  * @retval None
+  * @retval HAL Status : Value from HAL_StatusTypeDef enumeration.
   */
 HAL_StatusTypeDef HAL_I3C_GetCCCInfo(I3C_HandleTypeDef *hi3c,
                                      uint32_t notifyId,
@@ -6710,6 +7085,73 @@ HAL_StatusTypeDef HAL_I3C_GetCCCInfo(I3C_HandleTypeDef *hi3c,
 
   return status;
 }
+
+/**
+  * @brief  Get BCR, DCR and PID information after ENTDAA.
+  * @param  hi3c     : [IN] Pointer to an I3C_HandleTypeDef structure that contains the configuration information
+  *                         for the specified I3C.
+  * @param  ENTDAA_payload  :[IN] Payload received after ENTDAA
+  * @param  pENTDAA_payload :[OUT] Pointer to an I3C_ENTDAAPayloadTypeDef structure that contains the BCR, DCR and PID
+  *                          information.
+  * @retval HAL Status : Value from HAL_StatusTypeDef enumeration.
+  */
+HAL_StatusTypeDef HAL_I3C_Get_ENTDAA_Payload_Info(I3C_HandleTypeDef *hi3c,
+                                                  uint64_t ENTDAA_payload,
+                                                  I3C_ENTDAAPayloadTypeDef *pENTDAA_payload)
+{
+  HAL_StatusTypeDef status = HAL_OK;
+  uint32_t BCR;
+  uint64_t PID;
+
+  /* check on the handle */
+  if (hi3c == NULL)
+  {
+    status = HAL_ERROR;
+  }
+  else
+  {
+    /* Check on user parameters */
+    if (pENTDAA_payload == NULL)
+    {
+      /* Update handle error code parameter */
+      hi3c->ErrorCode = HAL_I3C_ERROR_INVALID_PARAM;
+      status = HAL_ERROR;
+    }
+    else
+    {
+      /* Get Bus Characterics */
+      BCR = __HAL_I3C_GET_BCR(ENTDAA_payload);
+
+      /* Retrieve BCR information */
+      pENTDAA_payload->BCR.IBIPayload = __HAL_I3C_GET_IBI_PAYLOAD(BCR);
+      pENTDAA_payload->BCR.IBIRequestCapable = __HAL_I3C_GET_IBI_CAPABLE(BCR);
+      pENTDAA_payload->BCR.DeviceRole = __HAL_I3C_GET_CR_CAPABLE(BCR);
+      pENTDAA_payload->BCR.AdvancedCapabilities = I3C_GET_ADVANCED_CAPABLE(BCR);
+      pENTDAA_payload->BCR.OfflineCapable = I3C_GET_OFFLINE_CAPABLE(BCR);
+      pENTDAA_payload->BCR.VirtualTargetSupport = I3C_GET_VIRTUAL_TGT(BCR);
+      pENTDAA_payload->BCR.MaxDataSpeedLimitation = I3C_GET_MAX_DATA_SPEED_LIMIT(BCR);
+
+      /* Get Device Characterics */
+      pENTDAA_payload->DCR = I3C_GET_DCR(ENTDAA_payload);
+
+      /* Get Provisioned ID */
+      PID = I3C_GET_PID(ENTDAA_payload);
+
+      /* Change PID from BigEndian to litlleEndian */
+      PID = (uint64_t)((((uint64_t)I3C_BIG_TO_LITTLE_ENDIAN((uint32_t) PID) << 32)   |
+                        ((uint64_t)I3C_BIG_TO_LITTLE_ENDIAN((uint32_t)(PID >> 32)))) >> 16);
+
+      /* Retrieve PID information*/
+      pENTDAA_payload->PID.MIPIMID = I3C_GET_MIPIMID(PID);
+      pENTDAA_payload->PID.IDTSEL = I3C_GET_IDTSEL(PID);
+      pENTDAA_payload->PID.PartID = I3C_GET_PART_ID(PID);
+      pENTDAA_payload->PID.MIPIID = I3C_GET_MIPIID(PID);
+    }
+  }
+
+  return status;
+}
+
 /**
   * @}
   */
@@ -6727,24 +7169,22 @@ HAL_StatusTypeDef HAL_I3C_GetCCCInfo(I3C_HandleTypeDef *hi3c,
   * @brief  Interrupt Sub-Routine which handles target received events.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   uint32_t tmpevent = 0U;
 
   /* I3C Rx FIFO not empty interrupt Check */
-  if ((I3C_CHECK_FLAG(itFlags, HAL_I3C_FLAG_RXFNEF) != RESET) &&
-      (I3C_CHECK_IT_SOURCE(itSources, HAL_I3C_IT_RXFNEIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, HAL_I3C_FLAG_RXFNEF) != RESET)
   {
     /* Call receive treatment function */
     hi3c->ptrRxFunc(hi3c);
   }
 
   /* I3C target complete controller-role hand-off procedure (direct GETACCR CCC) event management --------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_CRUPDF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_CRUPDIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_CRUPDF) != RESET)
   {
     /* Clear controller-role update flag */
     LL_I3C_ClearFlag_CRUPD(hi3c->Instance);
@@ -6754,7 +7194,7 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   }
 
   /* I3C target receive any direct GETxxx CCC event management -------------------------------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_GETF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_GETIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_GETF) != RESET)
   {
     /* Clear GETxxx CCC flag */
     LL_I3C_ClearFlag_GET(hi3c->Instance);
@@ -6764,7 +7204,7 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   }
 
   /* I3C target receive get status command (direct GETSTATUS CCC) event management -----------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_STAF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_STAIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_STAF) != RESET)
   {
     /* Clear GETSTATUS CCC flag */
     LL_I3C_ClearFlag_STA(hi3c->Instance);
@@ -6774,7 +7214,7 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   }
 
   /* I3C target receive a dynamic address update (ENTDAA/RSTDAA/SETNEWDA CCC) event management -----------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_DAUPDF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_DAUPDIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_DAUPDF) != RESET)
   {
     /* Clear dynamic address update flag */
     LL_I3C_ClearFlag_DAUPD(hi3c->Instance);
@@ -6784,8 +7224,7 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   }
 
   /* I3C target receive maximum write length update (direct SETMWL CCC) event management -----------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_MWLUPDF) != RESET) &&
-      (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_MWLUPDIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_MWLUPDF) != RESET)
   {
     /* Clear SETMWL CCC flag */
     LL_I3C_ClearFlag_MWLUPD(hi3c->Instance);
@@ -6795,8 +7234,7 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   }
 
   /* I3C target receive maximum read length update(direct SETMRL CCC) event management -------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_MRLUPDF) != RESET) &&
-      (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_MRLUPDIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_MRLUPDF) != RESET)
   {
     /* Clear SETMRL CCC flag */
     LL_I3C_ClearFlag_MRLUPD(hi3c->Instance);
@@ -6806,7 +7244,7 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   }
 
   /* I3C target detect reset pattern (broadcast or direct RSTACT CCC) event management -------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_RSTF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_RSTIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_RSTF) != RESET)
   {
     /* Clear reset pattern flag */
     LL_I3C_ClearFlag_RST(hi3c->Instance);
@@ -6816,7 +7254,7 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   }
 
   /* I3C target receive activity state update (direct or broadcast ENTASx) CCC event management ----------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_ASUPDF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_ASUPDIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_ASUPDF) != RESET)
   {
     /* Clear ENTASx CCC flag */
     LL_I3C_ClearFlag_ASUPD(hi3c->Instance);
@@ -6826,8 +7264,7 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   }
 
   /* I3C target receive a direct or broadcast ENEC/DISEC CCC event management ----------------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_INTUPDF) != RESET) &&
-      (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_INTUPDIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_INTUPDF) != RESET)
   {
     /* Clear ENEC/DISEC CCC flag */
     LL_I3C_ClearFlag_INTUPD(hi3c->Instance);
@@ -6837,7 +7274,7 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   }
 
   /* I3C target receive a broadcast DEFTGTS CCC event management -----------------------------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_DEFF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_DEFIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_DEFF) != RESET)
   {
     /* Clear DEFTGTS CCC flag */
     LL_I3C_ClearFlag_DEF(hi3c->Instance);
@@ -6847,7 +7284,7 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   }
 
   /* I3C target receive a group addressing (broadcast DEFGRPA CCC) event management ----------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_GRPF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_GRPIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_GRPF) != RESET)
   {
     /* Clear DEFGRPA CCC flag */
     LL_I3C_ClearFlag_GRP(hi3c->Instance);
@@ -6857,7 +7294,7 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   }
 
   /* I3C target wakeup event management ----------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_WKPF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_WKPIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_WKPF) != RESET)
   {
     /* Clear WKP flag */
     LL_I3C_ClearFlag_WKP(hi3c->Instance);
@@ -6887,14 +7324,13 @@ static HAL_StatusTypeDef I3C_Tgt_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uin
   * @brief  Interrupt Sub-Routine which handles Controller received events.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Ctrl_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Ctrl_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* I3C controller receive IBI event management ---------------------------------------------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_IBIF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_IBIIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_IBIF) != RESET)
   {
     /* Clear IBI request flag */
     LL_I3C_ClearFlag_IBI(hi3c->Instance);
@@ -6909,7 +7345,7 @@ static HAL_StatusTypeDef I3C_Ctrl_Event_ISR(struct __I3C_HandleTypeDef *hi3c, ui
   }
 
   /* I3C controller controller-role request event management ---------------------------------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_CRF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_CRIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_CRF) != RESET)
   {
     /* Clear controller-role request flag */
     LL_I3C_ClearFlag_CR(hi3c->Instance);
@@ -6924,7 +7360,7 @@ static HAL_StatusTypeDef I3C_Ctrl_Event_ISR(struct __I3C_HandleTypeDef *hi3c, ui
   }
 
   /* I3C controller hot-join event management ------------------------------------------------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_HJF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_HJIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_HJF) != RESET)
   {
     /* Clear hot-join flag */
     LL_I3C_ClearFlag_HJ(hi3c->Instance);
@@ -6948,14 +7384,13 @@ static HAL_StatusTypeDef I3C_Ctrl_Event_ISR(struct __I3C_HandleTypeDef *hi3c, ui
   * @brief  Interrupt Sub-Routine which handles target hot join event.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Tgt_HotJoin_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Tgt_HotJoin_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* I3C target receive a dynamic address update event management */
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_DAUPDF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_DAUPDIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_DAUPDF) != RESET)
   {
     /* Clear dynamic address update flag */
     LL_I3C_ClearFlag_DAUPD(hi3c->Instance);
@@ -6994,14 +7429,13 @@ static HAL_StatusTypeDef I3C_Tgt_HotJoin_ISR(struct __I3C_HandleTypeDef *hi3c, u
   * @brief  Interrupt Sub-Routine which handles target control role event.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Tgt_CtrlRole_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Tgt_CtrlRole_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* I3C target complete controller-role hand-off procedure (direct GETACCR CCC) event management -------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_CRUPDF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_CRUPDIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_CRUPDF) != RESET)
   {
     /* Clear controller-role update flag */
     LL_I3C_ClearFlag_CRUPD(hi3c->Instance);
@@ -7029,15 +7463,13 @@ static HAL_StatusTypeDef I3C_Tgt_CtrlRole_ISR(struct __I3C_HandleTypeDef *hi3c, 
   * @brief  Interrupt Sub-Routine which handles target IBI event.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Tgt_IBI_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Tgt_IBI_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* I3C target IBI end process event management ---------------------------------------------------------------------*/
-  if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_IBIENDF) != RESET) &&
-      (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_IBIENDIE) != RESET))
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_IBIENDF) != RESET)
   {
     /* Clear IBI end flag */
     LL_I3C_ClearFlag_IBIEND(hi3c->Instance);
@@ -7065,18 +7497,16 @@ static HAL_StatusTypeDef I3C_Tgt_IBI_ISR(struct __I3C_HandleTypeDef *hi3c, uint3
   * @brief  Interrupt Sub-Routine which handles target transmit data in Interrupt mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Tgt_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Tgt_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* Check that a Tx process is ongoing */
   if (hi3c->State == HAL_I3C_STATE_BUSY_TX)
   {
     /* I3C Tx FIFO not full interrupt Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_TXFNFF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_TXFNFIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_TXFNFF) != RESET)
     {
       if (hi3c->TxXferCount > 0U)
       {
@@ -7086,7 +7516,7 @@ static HAL_StatusTypeDef I3C_Tgt_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32
     }
 
     /* I3C target frame complete event Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -7119,7 +7549,7 @@ static HAL_StatusTypeDef I3C_Tgt_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32
     }
 
     /* I3C target wakeup event management ----------------------------------*/
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_WKPF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_WKPIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_WKPF) != RESET)
     {
       /* Clear WKP flag */
       LL_I3C_ClearFlag_WKP(hi3c->Instance);
@@ -7141,18 +7571,16 @@ static HAL_StatusTypeDef I3C_Tgt_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32
   * @brief  Interrupt Sub-Routine which handles target receive data in Interrupt mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Tgt_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Tgt_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* Check that an Rx process is ongoing */
   if (hi3c->State == HAL_I3C_STATE_BUSY_RX)
   {
     /* I3C Rx FIFO not empty interrupt Check */
-    if ((I3C_CHECK_FLAG(itFlags, HAL_I3C_FLAG_RXFNEF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, HAL_I3C_IT_RXFNEIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, HAL_I3C_FLAG_RXFNEF) != RESET)
     {
       if (hi3c->RxXferCount > 0U)
       {
@@ -7162,7 +7590,7 @@ static HAL_StatusTypeDef I3C_Tgt_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32
     }
 
     /* I3C target frame complete event Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -7195,7 +7623,7 @@ static HAL_StatusTypeDef I3C_Tgt_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32
     }
 
     /* I3C target wakeup event management ----------------------------------*/
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_WKPF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_WKPIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_WKPF) != RESET)
     {
       /* Clear WKP flag */
       LL_I3C_ClearFlag_WKP(hi3c->Instance);
@@ -7218,17 +7646,16 @@ static HAL_StatusTypeDef I3C_Tgt_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32
   * @brief  Interrupt Sub-Routine which handles target transmit data in DMA mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Tgt_Tx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Tgt_Tx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* Check that a Tx process is ongoing */
   if (hi3c->State == HAL_I3C_STATE_BUSY_TX)
   {
     /* I3C target frame complete event Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -7264,7 +7691,7 @@ static HAL_StatusTypeDef I3C_Tgt_Tx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, ui
     }
 
     /* I3C target wakeup event management ----------------------------------*/
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_WKPF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_WKPIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_WKPF) != RESET)
     {
       /* Clear WKP flag */
       LL_I3C_ClearFlag_WKP(hi3c->Instance);
@@ -7286,17 +7713,16 @@ static HAL_StatusTypeDef I3C_Tgt_Tx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, ui
   * @brief  Interrupt Sub-Routine which handles target receive data in DMA mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Tgt_Rx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Tgt_Rx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* Check that a Rx process is ongoing */
   if (hi3c->State == HAL_I3C_STATE_BUSY_RX)
   {
     /* I3C target frame complete event Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -7332,7 +7758,7 @@ static HAL_StatusTypeDef I3C_Tgt_Rx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, ui
     }
 
     /* I3C target wakeup event management ----------------------------------*/
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_WKPF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_WKPIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_WKPF) != RESET)
     {
       /* Clear WKP flag */
       LL_I3C_ClearFlag_WKP(hi3c->Instance);
@@ -7355,18 +7781,16 @@ static HAL_StatusTypeDef I3C_Tgt_Rx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, ui
   * @brief  Interrupt Sub-Routine which handles controller transmission in interrupt mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Ctrl_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Ctrl_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* Check that a Tx process is ongoing */
   if (hi3c->State == HAL_I3C_STATE_BUSY_TX)
   {
     /* Check if Control FIFO requests data */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_CFNFF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_CFNFIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_CFNFF) != RESET)
     {
       if (hi3c->ControlXferCount > 0U)
       {
@@ -7376,8 +7800,7 @@ static HAL_StatusTypeDef I3C_Ctrl_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint3
     }
 
     /* I3C Tx FIFO not full interrupt Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_TXFNFF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_TXFNFIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_TXFNFF) != RESET)
     {
       if (hi3c->TxXferCount > 0U)
       {
@@ -7387,7 +7810,7 @@ static HAL_StatusTypeDef I3C_Ctrl_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint3
     }
 
     /* I3C target frame complete event Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -7433,18 +7856,16 @@ static HAL_StatusTypeDef I3C_Ctrl_Tx_ISR(struct __I3C_HandleTypeDef *hi3c, uint3
   * @brief  Interrupt Sub-Routine which handles controller reception in interrupt mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Ctrl_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Ctrl_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* Check that an Rx process is ongoing */
   if (hi3c->State == HAL_I3C_STATE_BUSY_RX)
   {
     /* Check if Control FIFO requests data */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_CFNFF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_CFNFIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_CFNFF) != RESET)
     {
       if (hi3c->ControlXferCount > 0U)
       {
@@ -7454,8 +7875,7 @@ static HAL_StatusTypeDef I3C_Ctrl_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint3
     }
 
     /* I3C Rx FIFO not empty interrupt Check */
-    if ((I3C_CHECK_FLAG(itFlags, HAL_I3C_FLAG_RXFNEF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, HAL_I3C_IT_RXFNEIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, HAL_I3C_FLAG_RXFNEF) != RESET)
     {
       if (hi3c->RxXferCount > 0U)
       {
@@ -7465,8 +7885,7 @@ static HAL_StatusTypeDef I3C_Ctrl_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint3
     }
 
     /* I3C Tx FIFO not full interrupt Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_TXFNFF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_TXFNFIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_TXFNFF) != RESET)
     {
       if (hi3c->TxXferCount > 0U)
       {
@@ -7476,7 +7895,7 @@ static HAL_StatusTypeDef I3C_Ctrl_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint3
     }
 
     /* I3C target frame complete event Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -7521,20 +7940,16 @@ static HAL_StatusTypeDef I3C_Ctrl_Rx_ISR(struct __I3C_HandleTypeDef *hi3c, uint3
   * @brief  Interrupt Sub-Routine which handles controller multiple transmission/reception in interrupt mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_ISR(struct __I3C_HandleTypeDef *hi3c,
-                                                    uint32_t itFlags,
-                                                    uint32_t itSources)
+static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* Check that a Tx/Rx process is ongoing */
   if (hi3c->State == HAL_I3C_STATE_BUSY_TX_RX)
   {
     /* Check if Control FIFO requests data */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_CFNFF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_CFNFIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_CFNFF) != RESET)
     {
       if (hi3c->ControlXferCount > 0U)
       {
@@ -7544,8 +7959,7 @@ static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_ISR(struct __I3C_HandleTypeDef *
     }
 
     /* I3C Tx FIFO not full interrupt Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_TXFNFF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_TXFNFIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_TXFNFF) != RESET)
     {
       if (hi3c->TxXferCount > 0U)
       {
@@ -7555,8 +7969,7 @@ static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_ISR(struct __I3C_HandleTypeDef *
     }
 
     /* I3C Rx FIFO not empty interrupt Check */
-    if ((I3C_CHECK_FLAG(itFlags, HAL_I3C_FLAG_RXFNEF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, HAL_I3C_IT_RXFNEIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, HAL_I3C_FLAG_RXFNEF) != RESET)
     {
       if (hi3c->RxXferCount > 0U)
       {
@@ -7566,7 +7979,7 @@ static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_ISR(struct __I3C_HandleTypeDef *
     }
 
     /* I3C target frame complete event Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -7604,14 +8017,188 @@ static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_ISR(struct __I3C_HandleTypeDef *
 }
 
 /**
+  * @brief  Interrupt Sub-Routine which handles controller transmission and Controller received events
+  *         in interrupt mode.
+  * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
+  *                            for the specified I3C.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
+  * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
+  */
+static HAL_StatusTypeDef I3C_Ctrl_Tx_Listen_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
+{
+  /* I3C controller receive IBI event management ---------------------------------------------------------------------*/
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_IBIF) != RESET)
+  {
+    /* Clear IBI request flag */
+    LL_I3C_ClearFlag_IBI(hi3c->Instance);
+
+#if (USE_HAL_I3C_REGISTER_CALLBACKS == 1U)
+    /* Call registered callback */
+    hi3c->NotifyCallback(hi3c, EVENT_ID_IBI);
+#else
+    /* Asynchronous IBI event Callback */
+    HAL_I3C_NotifyCallback(hi3c, EVENT_ID_IBI);
+#endif /* USE_HAL_I3C_REGISTER_CALLBACKS == 1U */
+  }
+
+  /* I3C controller controller-role request event management ---------------------------------------------------------*/
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_CRF) != RESET)
+  {
+    /* Clear controller-role request flag */
+    LL_I3C_ClearFlag_CR(hi3c->Instance);
+
+#if (USE_HAL_I3C_REGISTER_CALLBACKS == 1U)
+    /* Call registered callback */
+    hi3c->NotifyCallback(hi3c, EVENT_ID_CR);
+#else
+    /* Asynchronous controller-role event Callback */
+    HAL_I3C_NotifyCallback(hi3c, EVENT_ID_CR);
+#endif /* USE_HAL_I3C_REGISTER_CALLBACKS == 1U */
+  }
+
+  /* I3C controller hot-join event management ------------------------------------------------------------------------*/
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_HJF) != RESET)
+  {
+    /* Clear hot-join flag */
+    LL_I3C_ClearFlag_HJ(hi3c->Instance);
+
+#if (USE_HAL_I3C_REGISTER_CALLBACKS == 1U)
+    /* Call registered callback */
+    hi3c->NotifyCallback(hi3c, EVENT_ID_HJ);
+#else
+    /* Asynchronous hot-join event Callback */
+    HAL_I3C_NotifyCallback(hi3c, EVENT_ID_HJ);
+#endif /* USE_HAL_I3C_REGISTER_CALLBACKS == 1U */
+  }
+
+  /* ISR controller transmission */
+  return (I3C_Ctrl_Tx_ISR(hi3c, itMasks));
+}
+
+/**
+  * @brief  Interrupt Sub-Routine which handles controller reception and Controller received events in interrupt mode.
+  * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
+  *                            for the specified I3C.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
+  * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
+  */
+static HAL_StatusTypeDef I3C_Ctrl_Rx_Listen_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
+{
+  /* I3C controller receive IBI event management ---------------------------------------------------------------------*/
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_IBIF) != RESET)
+  {
+    /* Clear IBI request flag */
+    LL_I3C_ClearFlag_IBI(hi3c->Instance);
+
+#if (USE_HAL_I3C_REGISTER_CALLBACKS == 1U)
+    /* Call registered callback */
+    hi3c->NotifyCallback(hi3c, EVENT_ID_IBI);
+#else
+    /* Asynchronous IBI event Callback */
+    HAL_I3C_NotifyCallback(hi3c, EVENT_ID_IBI);
+#endif /* USE_HAL_I3C_REGISTER_CALLBACKS == 1U */
+  }
+
+  /* I3C controller controller-role request event management ---------------------------------------------------------*/
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_CRF) != RESET)
+  {
+    /* Clear controller-role request flag */
+    LL_I3C_ClearFlag_CR(hi3c->Instance);
+
+#if (USE_HAL_I3C_REGISTER_CALLBACKS == 1U)
+    /* Call registered callback */
+    hi3c->NotifyCallback(hi3c, EVENT_ID_CR);
+#else
+    /* Asynchronous controller-role event Callback */
+    HAL_I3C_NotifyCallback(hi3c, EVENT_ID_CR);
+#endif /* USE_HAL_I3C_REGISTER_CALLBACKS == 1U */
+  }
+
+  /* I3C controller hot-join event management ------------------------------------------------------------------------*/
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_HJF) != RESET)
+  {
+    /* Clear hot-join flag */
+    LL_I3C_ClearFlag_HJ(hi3c->Instance);
+
+#if (USE_HAL_I3C_REGISTER_CALLBACKS == 1U)
+    /* Call registered callback */
+    hi3c->NotifyCallback(hi3c, EVENT_ID_HJ);
+#else
+    /* Asynchronous hot-join event Callback */
+    HAL_I3C_NotifyCallback(hi3c, EVENT_ID_HJ);
+#endif /* USE_HAL_I3C_REGISTER_CALLBACKS == 1U */
+  }
+
+  /* ISR controller reception */
+  return (I3C_Ctrl_Rx_ISR(hi3c, itMasks));
+}
+
+/**
+  * @brief  Interrupt Sub-Routine which handles controller multiple transmission/reception  and
+  *         Controller received eventsin interrupt mode.
+  * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
+  *                            for the specified I3C.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
+  * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
+  */
+static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_Listen_Event_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
+{
+  /* I3C controller receive IBI event management ---------------------------------------------------------------------*/
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_IBIF) != RESET)
+  {
+    /* Clear IBI request flag */
+    LL_I3C_ClearFlag_IBI(hi3c->Instance);
+
+#if (USE_HAL_I3C_REGISTER_CALLBACKS == 1U)
+    /* Call registered callback */
+    hi3c->NotifyCallback(hi3c, EVENT_ID_IBI);
+#else
+    /* Asynchronous IBI event Callback */
+    HAL_I3C_NotifyCallback(hi3c, EVENT_ID_IBI);
+#endif /* USE_HAL_I3C_REGISTER_CALLBACKS == 1U */
+  }
+
+  /* I3C controller controller-role request event management ---------------------------------------------------------*/
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_CRF) != RESET)
+  {
+    /* Clear controller-role request flag */
+    LL_I3C_ClearFlag_CR(hi3c->Instance);
+
+#if (USE_HAL_I3C_REGISTER_CALLBACKS == 1U)
+    /* Call registered callback */
+    hi3c->NotifyCallback(hi3c, EVENT_ID_CR);
+#else
+    /* Asynchronous controller-role event Callback */
+    HAL_I3C_NotifyCallback(hi3c, EVENT_ID_CR);
+#endif /* USE_HAL_I3C_REGISTER_CALLBACKS == 1U */
+  }
+
+  /* I3C controller hot-join event management ------------------------------------------------------------------------*/
+  if (I3C_CHECK_FLAG(itMasks, I3C_EVR_HJF) != RESET)
+  {
+    /* Clear hot-join flag */
+    LL_I3C_ClearFlag_HJ(hi3c->Instance);
+
+#if (USE_HAL_I3C_REGISTER_CALLBACKS == 1U)
+    /* Call registered callback */
+    hi3c->NotifyCallback(hi3c, EVENT_ID_HJ);
+#else
+    /* Asynchronous hot-join event Callback */
+    HAL_I3C_NotifyCallback(hi3c, EVENT_ID_HJ);
+#endif /* USE_HAL_I3C_REGISTER_CALLBACKS == 1U */
+  }
+
+  /* ISR controller transmission/reception */
+  return (I3C_Ctrl_Multiple_Xfer_ISR(hi3c, itMasks));
+}
+/**
   * @brief  Interrupt Sub-Routine which handles controller CCC Dynamic Address Assignment command in interrupt mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Ctrl_DAA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Ctrl_DAA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   uint64_t target_payload = 0U;
 
@@ -7619,16 +8206,14 @@ static HAL_StatusTypeDef I3C_Ctrl_DAA_ISR(struct __I3C_HandleTypeDef *hi3c, uint
   if (hi3c->State == HAL_I3C_STATE_BUSY_DAA)
   {
     /* I3C Control FIFO not full interrupt Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_CFNFF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_CFNFIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_CFNFF) != RESET)
     {
       /* Write ENTDAA CCC information in the control register */
       LL_I3C_ControllerHandleCCC(hi3c->Instance, I3C_BROADCAST_ENTDAA, 0U, LL_I3C_GENERATE_STOP);
     }
 
     /* I3C Tx FIFO not full interrupt Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_TXFNFF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_TXFNFIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_TXFNFF) != RESET)
     {
       /* Check on the Rx FIFO threshold to know the Dynamic Address Assignment treatment process : byte or word */
       if (LL_I3C_GetRxFIFOThreshold(hi3c->Instance) == LL_I3C_RXFIFO_THRESHOLD_1_4)
@@ -7658,7 +8243,7 @@ static HAL_StatusTypeDef I3C_Ctrl_DAA_ISR(struct __I3C_HandleTypeDef *hi3c, uint
     }
 
     /* I3C frame complete event Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -7687,17 +8272,16 @@ static HAL_StatusTypeDef I3C_Ctrl_DAA_ISR(struct __I3C_HandleTypeDef *hi3c, uint
   * @brief  Interrupt Sub-Routine which handles controller transmit data in DMA mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Ctrl_Tx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Ctrl_Tx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* Check that a Tx process is ongoing */
   if (hi3c->State == HAL_I3C_STATE_BUSY_TX)
   {
     /* I3C target frame complete event Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -7756,17 +8340,16 @@ static HAL_StatusTypeDef I3C_Ctrl_Tx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, u
   * @brief  Interrupt Sub-Routine which handles controller receive data in DMA mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Ctrl_Rx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Ctrl_Rx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* Check that an Rx process is ongoing */
   if (hi3c->State == HAL_I3C_STATE_BUSY_RX)
   {
     /* I3C target frame complete event Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -7825,19 +8408,16 @@ static HAL_StatusTypeDef I3C_Ctrl_Rx_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, u
   * @brief  Interrupt Sub-Routine which handles controller multiple receive and transmit data in DMA mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_DMA_ISR(struct __I3C_HandleTypeDef *hi3c,
-                                                        uint32_t itFlags,
-                                                        uint32_t itSources)
+static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_DMA_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* Check that an Rx or Tx process is ongoing */
   if (hi3c->State == HAL_I3C_STATE_BUSY_TX_RX)
   {
     /* I3C target frame complete event Check */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -7903,18 +8483,16 @@ static HAL_StatusTypeDef I3C_Ctrl_Multiple_Xfer_DMA_ISR(struct __I3C_HandleTypeD
   * @brief  Interrupt Sub-Routine which handles abort process in interrupt mode.
   * @param  hi3c       : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration information
   *                            for the specified I3C.
-  * @param  itFlags    : [IN]  Interrupt flags to handle.
-  * @param  itSources  : [IN]  Interrupt sources enabled.
+  * @param  itMasks    : [IN]  Flag Interrupt Masks flags to handle.
   * @retval HAL Status :       Value from HAL_StatusTypeDef enumeration.
   */
-static HAL_StatusTypeDef I3C_Abort_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itFlags, uint32_t itSources)
+static HAL_StatusTypeDef I3C_Abort_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_t itMasks)
 {
   /* Check that an Abort process is ongoing */
   if (hi3c->State == HAL_I3C_STATE_ABORT)
   {
     /* I3C Rx FIFO not empty interrupt Check */
-    if ((I3C_CHECK_FLAG(itFlags, HAL_I3C_FLAG_RXFNEF) != RESET) &&
-        (I3C_CHECK_IT_SOURCE(itSources, HAL_I3C_IT_RXFNEIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, HAL_I3C_FLAG_RXFNEF) != RESET)
     {
       if (LL_I3C_IsActiveFlag_DOVR(hi3c->Instance) == 1U)
       {
@@ -7926,7 +8504,7 @@ static HAL_StatusTypeDef I3C_Abort_ISR(struct __I3C_HandleTypeDef *hi3c, uint32_
     /* I3C Abort frame complete event Check */
     /* Evenif abort is called, the Frame completion can arrive if abort is requested at the end of the processus */
     /* Evenif completion occurs, treat this end of processus as abort completion process */
-    if ((I3C_CHECK_FLAG(itFlags, I3C_EVR_FCF) != RESET) && (I3C_CHECK_IT_SOURCE(itSources, I3C_IER_FCIE) != RESET))
+    if (I3C_CHECK_FLAG(itMasks, I3C_EVR_FCF) != RESET)
     {
       /* Clear frame complete flag */
       LL_I3C_ClearFlag_FC(hi3c->Instance);
@@ -8368,7 +8946,7 @@ static HAL_StatusTypeDef I3C_Xfer_PriorPreparation(I3C_HandleTypeDef *hi3c, uint
   uint32_t current_tx_index = 0U;
   uint32_t global_tx_size   = 0U;
   uint32_t global_rx_size   = 0U;
-  uint32_t nb_tx_frame     = 0U;
+  uint32_t nb_tx_frame      = 0U;
   uint32_t direction;
 
   for (uint32_t descr_index = 0U; descr_index < counter; descr_index++)
@@ -8548,12 +9126,12 @@ static HAL_StatusTypeDef I3C_Xfer_PriorPreparation(I3C_HandleTypeDef *hi3c, uint
 
 /**
   * @brief  I3C fill Tx Buffer with data from CCC Descriptor.
-  * @param  hi3c        : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration
-  *                            information for the specified I3C.
-  * @param  indexDesc    : [IN]  Index of descriptor.
-  * @param  txSize       : [IN]  Size of Tx data.
+  * @param  hi3c           : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration
+  *                                information for the specified I3C.
+  * @param  indexDesc      : [IN]  Index of descriptor.
+  * @param  txSize         : [IN]  Size of Tx data.
   * @param  txCurrentIndex : [IN]  Current Index of TxBuffer.
-  * @retval index_tx      : [OUT] New current Index of TxBuffer.
+  * @retval index_tx       : [OUT] New current Index of TxBuffer.
   */
 static uint32_t I3C_FillTxBuffer_CCC(I3C_HandleTypeDef *hi3c,
                                      uint32_t           indexDesc,
@@ -8574,12 +9152,12 @@ static uint32_t I3C_FillTxBuffer_CCC(I3C_HandleTypeDef *hi3c,
 
 /**
   * @brief  I3C fill Tx Buffer with data from Private Descriptor.
-  * @param  hi3c        : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration
-  *                            information for the specified I3C.
-  * @param  indexDesc    : [IN]  Index of descriptor.
-  * @param  txSize       : [IN]  Size of Tx data.
+  * @param  hi3c           : [IN]  Pointer to an I3C_HandleTypeDef structure that contains the configuration
+  *                                information for the specified I3C.
+  * @param  indexDesc      : [IN]  Index of descriptor.
+  * @param  txSize         : [IN]  Size of Tx data.
   * @param  txCurrentIndex : [IN]  Current Index of TxBuffer.
-  * @retval index_tx      : [OUT] New current Index of TxBuffer.
+  * @retval index_tx       : [OUT] New current Index of TxBuffer.
   */
 static uint32_t I3C_FillTxBuffer_Private(I3C_HandleTypeDef *hi3c,
                                          uint32_t           indexDesc,

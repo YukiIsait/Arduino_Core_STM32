@@ -13,7 +13,9 @@
 #include "dwt.h"
 #include "hw_config.h"
 #include "clock.h"
-#include "usbd_if.h"
+#if defined (USBCON) && defined(USBD_USE_CDC)
+  #include "usbd_if.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +45,7 @@ void hw_config_init(void)
 {
   configIPClock();
 
+#if !defined (SKIP_DISABLING_UCPD_DEAD_BATTERY)
 #if defined(PWR_CR3_UCPD_DBDIS) || defined(PWR_UCPDR_UCPD_DBDIS)
   /* Disable the internal Pull-Up in Dead Battery pins of UCPD peripheral */
   HAL_PWREx_DisableUCPDDeadBattery();
@@ -51,6 +54,7 @@ void hw_config_init(void)
   /* Disable the internal Pull-Up in Dead Battery pins of UCPD peripheral */
   HAL_SYSCFG_StrobeDBattpinsConfig(SYSCFG_CFGR1_UCPD1_STROBE | SYSCFG_CFGR1_UCPD2_STROBE);
 #endif /* SYSCFG_CFGR1_UCPD1_STROBE || SYSCFG_CFGR1_UCPD2_STROBE */
+#endif /* !SKIP_DISABLING_UCPD_DEAD_BATTERY */
 
 #if defined(PWR_SVMCR_ASV)
   HAL_PWREx_EnableVddA();

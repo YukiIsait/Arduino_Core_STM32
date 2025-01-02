@@ -15,7 +15,7 @@ from xml.dom.minidom import parse
 script_path = Path(__file__).parent.resolve()
 sys.path.append(str(script_path.parent))
 from utils import copyFile, copyFolder, createFolder, deleteFolder, genSTM32List
-from utils import execute_cmd, getRepoBranchName
+from utils import defaultConfig, execute_cmd, getRepoBranchName
 
 if sys.platform.startswith("win32"):
     from colorama import init
@@ -23,7 +23,6 @@ if sys.platform.startswith("win32"):
     init(autoreset=True)
 
 home = Path.home()
-path_config_filename = "update_config.json"
 
 # GitHub
 gh_st = "https://github.com/STMicroelectronics/"
@@ -85,19 +84,6 @@ out_format = "| {:^12} | {:^7} | {:^8} | {:^8} | {:^1} | {:^8} | {:^8} | {:^1} |
 out_separator = "-" * 70
 
 
-def create_config(config_file_path):
-    global repo_local_path
-
-    # Create a Json file for a better path management
-    print(f"'{config_file_path}' file created. Please check the configuration.")
-    path_config_file = open(config_file_path, "w")
-    path_config_file.write(
-        json.dumps({"REPO_LOCAL_PATH": str(repo_local_path)}, indent=2)
-    )
-    path_config_file.close()
-    exit(1)
-
-
 def checkConfig():
     global repo_local_path
     global hal_dest_path
@@ -107,14 +93,18 @@ def checkConfig():
     global md_CMSIS_path
     global stm32_def
 
-    config_file_path = script_path / path_config_filename
+    config_file_path = script_path / "update_config.json"
     if config_file_path.is_file():
         try:
             config_file = open(config_file_path, "r")
             path_config = json.load(config_file)
-            # Common path
-            repo_local_path = Path(path_config["REPO_LOCAL_PATH"])
             config_file.close()
+            # Common path
+            if "REPO_LOCAL_PATH" not in path_config:
+                path_config["REPO_LOCAL_PATH"] = str(repo_local_path)
+                defaultConfig(config_file_path, path_config)
+            else:
+                repo_local_path = Path(path_config["REPO_LOCAL_PATH"])
             hal_dest_path = repo_local_path / repo_core_name / hal_dest_path
             md_HAL_path = hal_dest_path / md_HAL_path
             cmsis_dest_path = repo_local_path / repo_core_name / cmsis_dest_path
@@ -123,15 +113,15 @@ def checkConfig():
             stm32_def = (
                 repo_local_path
                 / repo_core_name
-                / "cores"
-                / "arduino"
-                / "stm32"
+                / "libraries"
+                / "SrcWrapper"
+                / "inc"
                 / stm32_def
             )
         except IOError:
             print(f"Failed to open {config_file}!")
     else:
-        create_config(config_file_path)
+        defaultConfig(config_file_path, {"REPO_LOCAL_PATH": str(repo_local_path)})
     createFolder(repo_local_path)
 
 
@@ -314,8 +304,8 @@ def updateSTRepo():
         if repo_path.exists():
             rname, bname = getRepoBranchName(repo_path)
             # Get new tags from the remote
-            git_cmds = [
-                ["git", "-C", repo_path, "fetch"],
+            execute_cmd(["git", "-C", repo_path, "fetch"], None)
+            execute_cmd(
                 [
                     "git",
                     "-C",
@@ -325,10 +315,11 @@ def updateSTRepo():
                     bname,
                     f"{rname}/{bname}",
                 ],
-            ]
+                None,
+            )
             gitmodule_path = repo_path / ".gitmodules"
             if gitmodule_path.exists():
-                git_cmds += (
+                execute_cmd(
                     [
                         "git",
                         "-C",
@@ -338,14 +329,14 @@ def updateSTRepo():
                         "--init",
                         "--recursive",
                     ],
+                    None,
                 )
         else:
             # Clone it as it does not exists yet
-            git_cmds = [
-                ["git", "-C", repo_local_path, "clone", "--recursive", gh_STM32Cube]
-            ]
-        for cmd in git_cmds:
-            execute_cmd(cmd, None)
+            execute_cmd(
+                ["git", "-C", repo_local_path, "clone", "--recursive", gh_STM32Cube],
+                None,
+            )
         latestTag(serie, repo_name, repo_path)
         checkVersion(serie, repo_path)
 
@@ -369,41 +360,23 @@ def latestTag(serie, repo_name, repo_path):
     # print(f"Latest tagged version available for {repo_name} is {version_tag}")
 
 
-def parseVersion(path):
+def parseVersion(path, patterns):
     main_found = False
     sub1_found = False
     sub2_found = False
     rc_found = False
-    if "HAL" in str(path):
-        main_pattern = re.compile(r"HAL_VERSION_MAIN.*0x([\dA-Fa-f]+)")
-        sub1_pattern = re.compile(r"HAL_VERSION_SUB1.*0x([\dA-Fa-f]+)")
-        sub2_pattern = re.compile(r"HAL_VERSION_SUB2.*0x([\dA-Fa-f]+)")
-        rc_pattern = re.compile(r"HAL_VERSION_RC.*0x([\dA-Fa-f]+)")
-    else:
-        main_pattern = re.compile(
-            r"(?:CMSIS|DEVICE|CMSIS_DEVICE)_VERSION_MAIN.*0x([\dA-Fa-f]+)"
-        )
-        sub1_pattern = re.compile(
-            r"(?:CMSIS|DEVICE|CMSIS_DEVICE)_VERSION_SUB1.*0x([\dA-Fa-f]+)"
-        )
-        sub2_pattern = re.compile(
-            r"(?:CMSIS|DEVICE|CMSIS_DEVICE)_VERSION_SUB2.*0x([\dA-Fa-f]+)"
-        )
-        rc_pattern = re.compile(
-            r"(?:CMSIS|DEVICE|CMSIS_DEVICE)_VERSION_RC.*0x([\dA-Fa-f]+)"
-        )
 
     for i, line in enumerate(open(path, encoding="utf8", errors="ignore")):
-        for match in re.finditer(main_pattern, line):
+        for match in re.finditer(patterns[0], line):
             VERSION_MAIN = int(match.group(1), 16)
             main_found = True
-        for match in re.finditer(sub1_pattern, line):
+        for match in re.finditer(patterns[1], line):
             VERSION_SUB1 = int(match.group(1), 16)
             sub1_found = True
-        for match in re.finditer(sub2_pattern, line):
+        for match in re.finditer(patterns[2], line):
             VERSION_SUB2 = int(match.group(1), 16)
             sub2_found = True
-        for match in re.finditer(rc_pattern, line):
+        for match in re.finditer(patterns[3], line):
             VERSION_RC = int(match.group(1), 16)
             rc_found = True
         if main_found and sub1_found and sub2_found and rc_found:
@@ -434,6 +407,12 @@ def parseVersion(path):
 def checkVersion(serie, repo_path):
     lserie = serie.lower()
     userie = serie.upper()
+
+    patterns = [re.compile(r"HAL_VERSION_MAIN.*0x([\dA-Fa-f]+)")]
+    patterns.append(re.compile(r"HAL_VERSION_SUB1.*0x([\dA-Fa-f]+)"))
+    patterns.append(re.compile(r"HAL_VERSION_SUB2.*0x([\dA-Fa-f]+)"))
+    patterns.append(re.compile(r"HAL_VERSION_RC.*0x([\dA-Fa-f]+)"))
+
     HAL_file = (
         repo_path
         / hal_src_path
@@ -441,7 +420,17 @@ def checkVersion(serie, repo_path):
         / "Src"
         / f"stm32{lserie}xx_hal.c"
     )
-    cube_HAL_versions[serie] = parseVersion(HAL_file)
+    with open(HAL_file, "r") as fp:
+        data = fp.read()
+        if "HAL_VERSION_MAIN" not in data:
+            HAL_file = (
+                repo_path
+                / hal_src_path
+                / f"STM32{userie}xx_HAL_Driver"
+                / "Inc"
+                / f"stm32{lserie}xx_hal.h"
+            )
+    cube_HAL_versions[serie] = parseVersion(HAL_file, patterns)
     if upargs.add:
         core_HAL_versions[serie] = "0.0.0"
     else:
@@ -451,8 +440,30 @@ def checkVersion(serie, repo_path):
             / "Src"
             / f"stm32{lserie}xx_hal.c"
         )
-        core_HAL_versions[serie] = parseVersion(HAL_file)
+        with open(HAL_file, "r") as fp:
+            data = fp.read()
+            if "HAL_VERSION_MAIN" not in data:
+                HAL_file = (
+                    repo_path
+                    / hal_dest_path
+                    / f"STM32{userie}xx_HAL_Driver"
+                    / "Inc"
+                    / f"stm32{lserie}xx_hal.h"
+                )
+        core_HAL_versions[serie] = parseVersion(HAL_file, patterns)
 
+    patterns = [
+        re.compile(r"(?:CMSIS|DEVICE|CMSIS_DEVICE)_VERSION_MAIN.*0x([\dA-Fa-f]+)")
+    ]
+    patterns.append(
+        re.compile(r"(?:CMSIS|DEVICE|CMSIS_DEVICE)_VERSION_SUB1.*0x([\dA-Fa-f]+)")
+    )
+    patterns.append(
+        re.compile(r"(?:CMSIS|DEVICE|CMSIS_DEVICE)_VERSION_SUB2.*0x([\dA-Fa-f]+)")
+    )
+    patterns.append(
+        re.compile(r"(?:CMSIS|DEVICE|CMSIS_DEVICE)_VERSION_RC.*0x([\dA-Fa-f]+)")
+    )
     CMSIS_file = (
         repo_path
         / cmsis_src_path
@@ -460,14 +471,14 @@ def checkVersion(serie, repo_path):
         / "Include"
         / f"stm32{lserie}xx.h"
     )
-    cube_CMSIS_versions[serie] = parseVersion(CMSIS_file)
+    cube_CMSIS_versions[serie] = parseVersion(CMSIS_file, patterns)
     if upargs.add:
         core_CMSIS_versions[serie] = "0.0.0"
     else:
         CMSIS_file = (
             cmsis_dest_path / f"STM32{userie}xx" / "Include" / f"stm32{lserie}xx.h"
         )
-        core_CMSIS_versions[serie] = parseVersion(CMSIS_file)
+        core_CMSIS_versions[serie] = parseVersion(CMSIS_file, patterns)
 
     # print(f"STM32Cube{serie} HAL version: {cube_HAL_versions[serie]}")
     # print(f"STM32Core{serie} HAL version: {core_HAL_versions[serie]}")
